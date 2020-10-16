@@ -17,7 +17,6 @@ library(dynlm)
 library(dLagM)
 library(vars)
 library(fpp2)
-#library(topicmodels)
 library(urca)
 library(gridExtra)
 library(grid)
@@ -141,8 +140,7 @@ tokenized<- function(corpus, str_of_interest){
                                     bigram==paste(as.character(init), 's', sep=''))])))
     
     bigram_relevance$relevance<-((bigram_relevance$relevance/bigram_relevance$total)-(min(bigram_relevance$relevance)/bigram_relevance$total))/((max(bigram_relevance$relevance)/bigram_relevance$total)-(min(bigram_relevance$relevance)/bigram_relevance$total))
-    #bigram_relevance$relevance<-(bigram_relevance$relevance-min(bigram_relevance$relevance))/(max(bigram_relevance$relevance)-min(bigram_relevance$relevance))
-    
+
   }
   
   monogram <- unnest_tokens(corpus, monogram, text, token = "ngrams", n=1) %>%
@@ -172,9 +170,6 @@ tokenized<- function(corpus, str_of_interest){
   
   
   monogram$relevance<-((monogram$relevance/monogram$total)-(min(monogram$relevance)/monogram$total))/((max(monogram$relevance)/monogram$total)-(min(monogram$relevance)/monogram$total))
-  #monogram$relevance<-(monogram$relevance-min(monogram$relevance))/(max(monogram$relevance)-min(monogram$relevance))
-  
-  #print(summary(monogram))
   
   monogram <- drop.numbers(monogram)
   monogram <- anti_join(monogram, stop_words, by=c('monogram'='word'))
@@ -257,9 +252,7 @@ flatfile<-function(sentiment, price){
   wfFlatfile.imp<-complete(wfFlatfile.miceimp, 1)
   
   wfFlatfile.imp<-dplyr::select(wfFlatfile.imp, c(Date, Price, Change, sentiment))
-  #sentdiff<-(wfFlatfile.imp$sentiment[1:length(wfFlatfile.imp$sentiment)-1] - wfFlatfile.imp$sentiment[2:length(wfFlatfile.imp$sentiment)])*-1
-  #sentdiff<-prepend(sentdiff, 0)
-  #wfFlatfile.imp$sentdiff<-sentdiff
+
   
   return(wfFlatfile.imp)
 }
@@ -340,8 +333,6 @@ volksWSJ2$doc_id<-as.Date(volksWSJ2$doc_id, '%d %B %Y')
 volksBarrons<-bind_rows(volksBarrons, volksBarrons2)
 volksForbes<-bind_rows(volksForbes, volksForbes2)
 volksFT<-bind_rows(volksFT, volksFT2)
-#volksNYT<-bind_rows(volksNYT, volksNYT2)
-#volksWSJ<-bind_rows(volksWSJ, volksWSJ2)
 
 wftxt<-c(Barrons, Economist, FT, Forbes, NYT, WSJ, Reuters)
 
@@ -399,7 +390,7 @@ volks.bing<-dplyr::rename(volks.bing, negative_b = negative, positive_b = positi
 length(unique(volks.loughran$doc_id))
 dim(wf.loughran)
 
-#wf.loughran <- dplyr::select(wf.loughran, -title)
+# Aggregate to prevent inflating weeks with more observations
 wf.loughran <- wf.loughran %>%
   group_by(doc_id) %>%
   summarise_each(funs(mean))
@@ -438,6 +429,7 @@ v_LOOBNT$sentscore<-v_LOOBNT$trust+v_LOOBNT$sentiment
 v_LOOBNT$sentiment<-v_LOOBNT$sentscore
 
 ### All negatives summed from NRC and Loughran
+### Double counting NRC words as proxy for valence
 
 wfNeg <- bind_cols(wf.loughran, dplyr::select(wf.nrc1, anger, disgust, fear, negative_n, sadness))
 wfNeg$sentiment <- apply(wfNeg[,c('constraining','litigious', 'negative_l', 'uncertainty', 'anger', 'fear', 'negative_n', 'sadness')], 1, sum)
@@ -476,6 +468,7 @@ v_comb <- left_join(volks.loughran1, volks.nrc1, by = c('doc_id', 'title', 'Date
 v_comb <- left_join(v_comb, volks.bing1)
 
 v_comb$sentiment <- apply(v_comb[,6:length(colnames(v_comb))], 1, sum)
+
 ### Price Processing    ######################################################
 
 wfprice<-read.price_ts('WellsFargo/Bloomberg/WellsFargoPrice.csv')
@@ -525,7 +518,7 @@ v_sent_diff<-append(0, v_sent_diff)
 wfFlatfile.imp$log_Change <- wf_price_change
 volksFF$log_Change <- v_price_change
 
-#### Difference Sentiment
+#### Difference Sentiment (if necessary)
 #volksFF$sentiment <- v_sent_diff
 
 
@@ -570,15 +563,12 @@ VARselect(wfFlatfile.imp[,c('log_Change', 'sentiment')], lag = 20, type='both')
 VARselect(volksFF[,c('sentiment', 'Change')], lag = 20, type='both')
 VARselect(volksFF[,c('sentiment', 'log_Change')], lag = 20, type='both')
 
-
-
 wf_var<-VAR(wfFlatfile.imp[,c('sentiment', 'log_Change')], p=1, type='both')
 serial.test(wf_var)
 v_var<-VAR(volksFF[,c('sentiment', 'log_Change')], p=1, type='both')
 serial.test(v_var)
 
-
-
+# Investigate granger causality across multiple lags
 for (i in 1:20){
   cat("LAG =", i)
   print(causality(VAR(wfFlatfile.imp[,c('sentiment', 'log_Change')], p = i, type = "const"), cause = "sentiment")$Granger)
@@ -595,88 +585,10 @@ grangertest(volksFF$sentiment,volksFF$Change, 1)
 
 
 
-### VAR Model ####
-
-V.2<-VAR(wfFlatfile.imp[,c('sentiment', 'Change')], p=2, type='both')
-serial.test(V.2)
-
-
-V.6<-VAR(wfFlatfile.imp[,c('Change', 'sentiment')], p=11, type='both')
-serial.test(V.6)
-
-### auto.arima####
-
-wf_aa_sent<-auto.arima(wfFlatfile.imp$sentiment)
-
-summary(wf_aa_sent)
-
-wf_aa_price<-auto.arima(wfFlatfile.imp$Change)
-
-summary(wf_aa_price)
-
-wf_aa_close<- auto.arima(wfFlatfile.imp$Price)
-
-summary(wf_aa_close)
-
-acf(wfFlatfile.imp$sentiment)
-pacf(wfFlatfile.imp$sentiment)
-
-wfFlatfile.imp$scandal <- ifelse(wfFlatfile.imp$Date < '2016-09-08', 0, 1)
-
-wf_arTest1<- Arima(wf_sent_ts, order=c(9,0,0), include.mean = T)
-wf_arTest2<- Arima(wf_sent_ts, order=c(9,0,0), xreg = wfFlatfile.imp$scandal, include.mean = T)
-
-summary(wf_arTest1)
-summary(wf_arTest2)
-
-
-volks_aa_sent<-auto.arima(volksFF$sentiment)
-
-summary(volks_aa_sent)
-
-volks_aa_price<-auto.arima(wfFlatfile.imp$Price)
-
-summary(volks_aa_price)
-
-
-acf(volksFF$sentiment)
-pacf(volksFF$sentiment)
-
-volksFF$scandal <- ifelse(volksFF$Date < '2015-09-03', 0, 1)
-
-volks_arTest1<- Arima(volks_sent_ts, order=c(1,0,0), include.mean = T)
-volks_arTest2<- Arima(volks_sent_ts, order=c(1,0,0), xreg = volksFF$scandal, include.mean = F)
-
-summary(volks_arTest1)
-summary(volks_arTest2)
-
-forecast::forecast(wf_arTest1) %>%
-  autoplot() + xlab("Date")
 
 #########################################################################################################
 ################################      E   D   A      ####################################################
 #########################################################################################################
-
-vp_ts <- ts(VolksPrice$Price, start=1, frequency = 52)
-plot(stl(vp_ts, s.window=52))
-
-compfx <- function(x,y){
-  if (x>y){
-    return(1)
-  }
-  else{
-    return(0)
-  }
-}
-
-
-# Time frame since story broke, maybe obsolete
-wfFlatfile.imp$Exposed<- sapply(wfFlatfile.imp$Date, compfx, y='2016-09-08')
-volksFF$Exposed<-sapply(volksFF$Date, compfx, y='2014-10-10')
-
-# exponentially distributed relevance. Not anymore since including the log transform in the preprocessing.
-hist(c$relevance.y)
-
 
 # ts wf data for acf analysis to determine the lag for the ardlDlm
 wf_price_ts <- ts(wfFlatfile.imp$Price, start = c(2015,36),  frequency =52)
@@ -689,33 +601,7 @@ volks_change_ts <- ts(volksFF$Change, start = c(2014,41),  frequency =52)
 volks_logchange_ts <- ts(volksFF$log_Change, start = c(2014,41),  frequency =52)
 volks_sent_ts <- ts(volksFF$sentiment,  start = c(2014,41),  frequency =52)
 
-# Plot different windows for the volks
-plot(volks_change_ts)
-plot(volksFF$Price, type='l')
-abline(v=min(which(volksFF$scandal==1)), col="blue")
-abline(v=26, col="red")
-
-
-
-#for (i in 1:13){
-#  plot(stl(volks_change_ts, s.window = 52, t.window = i), main=paste('Price Change \n Lag = ', as.character(i), sep=''))
-#}
-
-#for (i in 1:13){
-#  plot(stl(volks_sent_ts, s.window = 52, t.window = i), main=paste('Non-Normed Sent Change \n Lag = ', as.character(i), sep=''))
-#}
-
-############
-
-
-price_change <- stl(volks_change_ts, s.window = 52, t.window = 7)$trend
-sent_change <- stl(volks_sent_ts, s.window = 52, t.window = 7)$trend
-
-
-
-plot(stl(volks_change_ts, s.window = 52))
-
-
+# Half Year trends
 for (i in 1:26){
   temp <- wfFlatfile.imp
   pc <- stl(wf_change_ts, s.window = 52, t.window = i) 
@@ -839,25 +725,8 @@ gg_t2 <-  ggplot(temp) +
   labs(title ='Volkswagen 6 Month Moving Average Plots') +
   ylab('Scaled Averaged Change')
 print(gg_t2)
-# 
 
-# Random Walk
-
-wf_change_rw <- rwf(wf_change_ts, h=10)
-wf_logchange_rw <- rwf(wf_logchange_ts, h=10)
-
-v_change_rw <- rwf(volks_change_ts, h=10)
-v_logchange_rw <- rwf(volks_logchange_ts, h=10)
-
-autoplot(wf_change_rw) +
-  ylab("Change in Price") + xlab("Year")
-autoplot(wf_logchange_rw) +
-  ylab("Change in Price") + xlab("Year")
-autoplot(v_change_rw) +
-  ylab("Change in Price") + xlab("Year")
-autoplot(v_logchange_rw) +
-  ylab("Change in Price") + xlab("Year")
-
+# Modeling 
 # train and test for WF ardlDlm (gonna go 80-20)
 test_size<- length(wfFlatfile.imp$Date)%/%5
 train_size <- 4*test_size
@@ -919,7 +788,6 @@ tfx_model2<- auto_ardl(logChange~sentiment, data = wf_traindf, max_order = c(10,
 v_tfx_model1 <- auto_ardl(Change~sentiment, data = v_traindf, max_order = c(10,4))
 v_tfx_model2 <- auto_ardl(logChange~sentiment, data = v_traindf, max_order = c(10,20))
 
-# Autoplot
 tfx_model1$best_order
 tfx_model2$best_order
 v_tfx_model1$best_order
@@ -979,7 +847,7 @@ v_MSE1 <- sum((v_diff1)^2)/length(v_testY1)
 v_MSE2 <- sum((v_diff2)^2)/length(v_testY1)
 
 
-# VAR model and predictions (Don't use x2 due to stationarity assumption violation)
+# VAR model and predictions 
 VARselect(wfFlatfile.imp[,c('Change', 'sentiment')], lag = 20, type='both')
 VARselect(wfFlatfile.imp[,c('sentiment', 'log_Change')], lag = 20, type='both')
 
@@ -1011,7 +879,7 @@ for (i in 2:35){
 }
 
 wfVAR2_pred <- rep(wfVAR2$varresult$Log.Price.Change$coefficients[3], 35)
-for (i in 4:35){
+for (i in 2:35){
   wfVAR2_pred[i] <- wfVAR2$varresult$Log.Price.Change$coefficients[3] +
     i*wfVAR2$varresult$Log.Price.Change$coefficients[4] +
     testX1[i-1]*wfVAR2$varresult$Log.Price.Change$coefficients[1] +
@@ -1285,6 +1153,11 @@ g_volksent
 par(mfrow=c(2,2))
 
 grid.arrange(g_wfPriceDiff, g_wfsent,g_volksPriceDiff,g_volksent, nrow = 2, ncol=2)
+
+
+################################
+##### SCRATCH ##################
+################################
 
 
 ### SVD ##########
